@@ -52,5 +52,6 @@ jobs:
             -kubernetes-version 1.35.4 \
             -schema-location default \
             -schema-location 'https://raw.githubusercontent.com/datreeio/CRDs-catalog/main/argoproj.io/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json' \
+            -schema-location 'https://raw.githubusercontent.com/datreeio/CRDs-catalog/main/bitnami.com/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json' \
             bootstrap/environments/prod/*.yaml \
             /tmp/rendered/*.yaml
