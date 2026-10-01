@@ -35,10 +35,6 @@ jobs:
           kubeconform -v
           git log -1 --pretty=format:"%H %s"
 
-      # - name: dry-run
-      #   run: |
-      #     kubectl apply --dry-run=client -f bootstrap/environments/prod/
-
       - name: kustomize build
         run: |
           kubectl kustomize platform/environments/prod > /tmp/platform.yaml
