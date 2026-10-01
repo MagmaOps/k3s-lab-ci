@@ -1,0 +1,36 @@
+# .github/workflows/k3s-validate.yaml
+
+name: k3s validate
+
+on:
+  workflow_call:
+    inputs:
+      ref:
+        required: true
+        type: string
+
+jobs:
+  checkout:
+    runs-on: arc-runners
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+        with:
+          repository: MagmaOps/k3s-lab
+          ref: ${{ inputs.ref }}
+
+      - name : Setup kubectl
+        uses: azure/setup-kubectl@v4
+        with:
+          version: '1.35.4'
+        id: install
+
+      - name: Setup Kubeconform
+        uses: bmuschko/setup-kubeconform@v1
+
+      - name: Validate setup
+        run: |
+          kubectl version --client
+          kubeconform -version
+          git log -1 --pretty=format:"%H %s"
