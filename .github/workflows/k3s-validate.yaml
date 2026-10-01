@@ -32,5 +32,5 @@ jobs:
       - name: Validate setup
         run: |
           kubectl version --client
-          kubeconform -version
+          kubeconform -v
           git log -1 --pretty=format:"%H %s"
