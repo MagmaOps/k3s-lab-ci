@@ -36,17 +36,21 @@ jobs:
           kubeconform -h | grep -A5 schema-location
           git log -1 --pretty=format:"%H %s"
 
-      - name: kustomize build
-        run: |
-          kubectl kustomize platform/environments/prod > /tmp/platform.yaml
-          kubectl kustomize apps/environments/prod > /tmp/apps.yaml
-      
       - name: validate manifests
         run: |
+          mkdir -p /tmp/rendered
+
+          kubectl kustomize platform/environments/prod \
+            > /tmp/rendered/platform.yaml
+
+          kubectl kustomize apps/environments/prod \
+            > /tmp/rendered/apps.yaml
+
           kubeconform \
             -summary \
             -strict \
             -kubernetes-version 1.35.4 \
             -schema-location default \
             -schema-location 'https://raw.githubusercontent.com/datreeio/CRDs-catalog/main/argoproj.io/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json' \
-            bootstrap/environments/prod/*.yaml
+            bootstrap/environments/prod/*.yaml \
+            /tmp/rendered/*.yaml
