@@ -35,15 +35,15 @@ jobs:
           kubeconform -v
           git log -1 --pretty=format:"%H %s"
 
-      - name: dry-run
-        run: |
-          kubectl apply --dry-run=client -f bootstrap/environments/prod/
+      # - name: dry-run
+      #   run: |
+      #     kubectl apply --dry-run=client -f bootstrap/environments/prod/
 
       - name: kustomize build
         run: |
-          kubectl kustomize platform/environments/prod
-          kubectl kustomize apps/environments/prod
+          kubectl kustomize platform/environments/prod > /tmp/platform.yaml
+          kubectl kustomize apps/environments/prod > /tmp/apps.yaml
       
       - name: Validate manifests
         run: |
-          kubeconform -summary -strict -ignore-missing-schemas -kubernetes-version 1.35.4 bootstrap/environments/prod/*.yaml
+          kubeconform -summary -strict -kubernetes-version 1.35.4 bootstrap/environments/prod/*.yaml
