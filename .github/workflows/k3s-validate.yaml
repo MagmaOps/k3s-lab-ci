@@ -33,6 +33,7 @@ jobs:
         run: |
           kubectl version --client
           kubeconform -v
+          kubeconform -h | grep -A5 schema-location
           git log -1 --pretty=format:"%H %s"
 
       - name: kustomize build
