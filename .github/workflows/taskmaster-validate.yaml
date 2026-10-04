@@ -67,6 +67,14 @@ jobs:
           repository: MagmaOps/TaskMaster
           ref: ${{ inputs.ref }}
 
+      - name: Install PostgreSQL setup prerequisites
+        run: |
+          SUDO=""
+          if command -v sudo >/dev/null 2>&1; then SUDO="sudo"; fi
+          $SUDO apt-get update
+          $SUDO apt-get install -y --no-install-recommends \
+            wget gnupg lsb-release ca-certificates
+
       - name: Setup PostgreSQL
         uses: ikalnytskyi/action-setup-postgres@v8
         with:
@@ -74,7 +82,7 @@ jobs:
           password: test_password
           database: taskmaster_test
           port: 5433
-          postgres-version: 18
+          postgres-version: '18'
 
       - name: Setup Node
         uses: actions/setup-node@v4
