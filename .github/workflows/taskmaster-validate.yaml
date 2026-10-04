@@ -17,7 +17,7 @@ jobs:
   # ---------------------------------------------------------------------------
   # Frontend: lint, typecheck, test, build
   # ---------------------------------------------------------------------------
-  frontend:
+  taskmaster_frontend:
     runs-on: arc-runners
     defaults:
       run:
@@ -54,26 +54,11 @@ jobs:
   # ---------------------------------------------------------------------------
   # Backend: lint, typecheck, test (against Postgres), build
   # ---------------------------------------------------------------------------
-  backend:
+  taskmaster_backend:
     runs-on: arc-runners
     defaults:
       run:
         working-directory: task-master-server
-
-    services:
-      postgres:
-        image: postgres:18-alpine
-        env:
-          POSTGRES_USER: postgres
-          POSTGRES_PASSWORD: test_password
-          POSTGRES_DB: taskmaster_test
-        ports:
-          - 5433:5432
-        options: >-
-          --health-cmd "pg_isready -U postgres"
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
 
     steps:
       - name: Checkout code
@@ -81,6 +66,15 @@ jobs:
         with:
           repository: MagmaOps/TaskMaster
           ref: ${{ inputs.ref }}
+
+      - name: Setup PostgreSQL
+        uses: ikalnytskyi/action-setup-postgres@v8
+        with:
+          username: postgres
+          password: test_password
+          database: taskmaster_test
+          port: 5433
+          postgres-version: '18'
 
       - name: Setup Node
         uses: actions/setup-node@v4
