@@ -74,7 +74,7 @@ jobs:
           password: test_password
           database: taskmaster_test
           port: 5433
-          postgres-version: '18'
+          postgres-version: 18
 
       - name: Setup Node
         uses: actions/setup-node@v4
