@@ -1,0 +1,125 @@
+# .github/workflows/taskmaster-validate.yaml
+
+name: taskmaster validate
+
+on:
+  workflow_call:
+    inputs:
+      ref:
+        required: true
+        type: string
+      repository:
+        required: false
+        type: string
+        default: MagmaOps/TaskMaster
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # Frontend: lint, typecheck, test, build
+  # ---------------------------------------------------------------------------
+  frontend:
+    runs-on: arc-runners
+    defaults:
+      run:
+        working-directory: task-master-front
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          repository: MagmaOps/TaskMaster
+          ref: ${{ inputs.ref }}
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: task-master-front/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Test
+        run: npm test
+
+      - name: Build
+        run: npm run build
+
+  # ---------------------------------------------------------------------------
+  # Backend: lint, typecheck, test (against Postgres), build
+  # ---------------------------------------------------------------------------
+  backend:
+    runs-on: arc-runners
+    defaults:
+      run:
+        working-directory: task-master-server
+
+    services:
+      postgres:
+        image: postgres:18-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: test_password
+          POSTGRES_DB: taskmaster_test
+        ports:
+          - 5433:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          repository: MagmaOps/TaskMaster
+          ref: ${{ inputs.ref }}
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: task-master-server/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Wait for Postgres
+        run: |
+          node -e "
+            const { Client } = require('pg');
+            const url = 'postgresql://postgres:test_password@localhost:5433/taskmaster_test';
+            (async () => {
+              for (let i = 1; i <= 30; i++) {
+                const c = new Client({ connectionString: url });
+                try { await c.connect(); await c.query('SELECT 1'); await c.end();
+                  console.log('Postgres ready'); process.exit(0);
+                } catch (e) {
+                  await c.end().catch(() => {});
+                  console.log('waiting for postgres... (' + i + ')');
+                  await new Promise(r => setTimeout(r, 2000));
+                }
+              }
+              console.error('Postgres did not become ready in time'); process.exit(1);
+            })();
+          "
+
+      - name: Test
+        run: npm test
+
+      - name: Build
+        run: npm run build
