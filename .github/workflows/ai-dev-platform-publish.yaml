@@ -1,0 +1,79 @@
+# .github/workflows/ai-dev-platform-publish.yaml
+#
+# Builds and pushes magmakomer/claude-dev:<version> to Docker Hub. The version is the
+# newTag pinned in k8s/base/kustomization.yaml. Only the exact semver tag is pushed
+# (never `latest`), and an existing tag is never overwritten: bump the version instead.
+
+name: ai-dev-platform publish
+
+on:
+  workflow_call:
+    inputs:
+      ref:
+        required: true
+        type: string
+      repository:
+        required: false
+        type: string
+        default: MagmaOps/ai-dev-platform
+      image:
+        required: false
+        type: string
+        default: magmakomer/claude-dev
+    secrets:
+      DOCKERHUB_USERNAME:
+        required: true
+      DOCKERHUB_TOKEN:
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    runs-on: arc-runners
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ inputs.repository }}
+          ref: ${{ inputs.ref }}
+
+      - name: Read version from kustomization
+        id: ver
+        run: |
+          set -euo pipefail
+          version=$(grep -E '^\s+newTag:' k8s/base/kustomization.yaml | awk '{print $2}' | sort -u)
+          if ! echo "$version" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$'; then
+            echo "::error::newTag must be a single semver in k8s/base/kustomization.yaml, got: $version"
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Setup Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      # Published tags are immutable: refuse to overwrite an existing version.
+      - name: Refuse to overwrite an existing tag
+        env:
+          REF: ${{ inputs.image }}:${{ steps.ver.outputs.version }}
+        run: |
+          set -euo pipefail
+          if docker buildx imagetools inspect "$REF" >/dev/null 2>&1; then
+            echo "::error::$REF already exists on Docker Hub. Bump newTag in k8s/base/kustomization.yaml and k8s/overlays/homelab/kustomization.yaml."
+            exit 1
+          fi
+
+      - name: Build and push image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/Dockerfile
+          push: true
+          tags: ${{ inputs.image }}:${{ steps.ver.outputs.version }}
