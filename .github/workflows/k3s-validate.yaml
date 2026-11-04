@@ -31,27 +31,89 @@ jobs:
 
       - name: Validate setup
         run: |
+          set -euo pipefail
           kubectl version --client
           kubeconform -v
           kubeconform -h | grep -A5 schema-location
           git log -1 --pretty=format:"%H %s"
 
-      - name: validate manifests
+      - name: Render kustomize overlays
         run: |
+          set -euo pipefail
           mkdir -p /tmp/rendered
 
-          kubectl kustomize platform/environments/prod \
-            > /tmp/rendered/platform.yaml
+          # Fail loudly if a kustomization is broken: build to a temp file first,
+          # then move into place only on success so a failed render never leaves a
+          # partial/empty file that kubeconform would happily "pass".
+          render() {
+            local src="$1" out="$2"
+            echo "::group::kustomize build ${src}"
+            kubectl kustomize "${src}" > "${out}.tmp"
+            mv "${out}.tmp" "${out}"
+            echo "::endgroup::"
+          }
 
-          kubectl kustomize apps/environments/prod \
-            > /tmp/rendered/apps.yaml
+          render platform/environments/prod /tmp/rendered/platform.yaml
+          render apps/environments/prod     /tmp/rendered/apps.yaml
 
+      - name: Validate manifests (kubeconform)
+        run: |
+          set -euo pipefail
+
+          # Single group-templated CRD schema location covers every custom resource
+          # we ship (argoproj.io, bitnami.com, postgresql.cnpg.io, metallb.io,
+          # monitoring.coreos.com, ...). Missing schemas are reported via -verbose
+          # rather than silently passing.
           kubeconform \
             -summary \
             -strict \
+            -verbose \
             -kubernetes-version 1.35.4 \
             -schema-location default \
-            -schema-location 'https://raw.githubusercontent.com/datreeio/CRDs-catalog/main/argoproj.io/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json' \
-            -schema-location 'https://raw.githubusercontent.com/datreeio/CRDs-catalog/main/bitnami.com/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json' \
+            -schema-location 'https://raw.githubusercontent.com/datreeio/CRDs-catalog/main/{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json' \
             bootstrap/environments/prod/*.yaml \
+            namespaces/*.yaml \
+            platform/metallb/*.yaml \
+            platform/metallb/metallb-config/*.yaml \
             /tmp/rendered/*.yaml
+
+      # Ping Telegram only when something above failed. Reuses the same bot as
+      # the cluster Alertmanager. Token + chat id come from inherited secrets
+      # (the caller passes `secrets: inherit`), never hardcoded.
+      # Skips silently if the secrets are not configured so forks don't break.
+      - name: Notify Telegram on failure
+        if: failure()
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          PR_URL: ${{ github.event.pull_request.html_url }}
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          ACTOR: ${{ github.actor }}
+          SHA: ${{ inputs.ref }}
+        run: |
+          set -euo pipefail
+
+          if [ -z "${TELEGRAM_BOT_TOKEN:-}" ] || [ -z "${TELEGRAM_CHAT_ID:-}" ]; then
+            echo "TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID not set; skipping notification."
+            exit 0
+          fi
+
+          read -r -d '' TEXT <<EOF || true
+          🔴 <b>k3s-lab validation failed</b>
+
+          <b>PR:</b> ${PR_TITLE:-n/a}
+          <b>By:</b> ${ACTOR}
+          <b>Commit:</b> <code>${SHA}</code>
+
+          <a href="${RUN_URL}">View run log</a>${PR_URL:+ · <a href="${PR_URL}">View PR</a>}
+          EOF
+
+          # --fail so a Telegram API error surfaces in the log (but never masks the
+          # original validation failure, since this step only runs on failure()).
+          curl -sS --fail \
+            -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
+            -d "chat_id=${TELEGRAM_CHAT_ID}" \
+            -d "parse_mode=HTML" \
+            -d "disable_web_page_preview=true" \
+            --data-urlencode "text=${TEXT}"
