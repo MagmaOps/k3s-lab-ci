@@ -1,0 +1,139 @@
+# .github/workflows/job-search-lab-validate.yaml
+
+name: job-search-lab validate
+
+on:
+  workflow_call:
+    inputs:
+      ref:
+        required: true
+        type: string
+      repository:
+        required: false
+        type: string
+        default: MagmaOps/job-search-lab
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # Backend: ruff + pytest (in-memory SQLite, stub AI provider, no network)
+  # ---------------------------------------------------------------------------
+  jobsearch_backend:
+    runs-on: arc-runners
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ inputs.repository }}
+          ref: ${{ inputs.ref }}
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: backend/pyproject.toml
+
+      - name: Install dependencies
+        run: pip install -e ".[dev]"
+
+      - name: Lint
+        run: ruff check src tests
+
+      - name: Test
+        run: pytest -q
+
+  # ---------------------------------------------------------------------------
+  # Web: type-check + production build
+  # ---------------------------------------------------------------------------
+  jobsearch_web:
+    runs-on: arc-runners
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ inputs.repository }}
+          ref: ${{ inputs.ref }}
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      # `next build` also type-checks; the project has no separate lint/test scripts.
+      - name: Build
+        run: npm run build
+
+  # ---------------------------------------------------------------------------
+  # Kubernetes base manifests (consumed by k3s-lab)
+  # ---------------------------------------------------------------------------
+  jobsearch_manifests:
+    runs-on: arc-runners
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ inputs.repository }}
+          ref: ${{ inputs.ref }}
+
+      - name: Setup kubectl
+        uses: azure/setup-kubectl@v4
+        with:
+          version: 'v1.35.4'
+
+      - name: Setup Kubeconform
+        uses: bmuschko/setup-kubeconform@v1
+
+      - name: Render manifests
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/rendered
+          kubectl kustomize k8s/base > /tmp/rendered/jobsearch-base.yaml.tmp
+          mv /tmp/rendered/jobsearch-base.yaml.tmp /tmp/rendered/jobsearch-base.yaml
+
+      - name: Validate manifests
+        run: |
+          kubeconform \
+            -summary \
+            -strict \
+            -kubernetes-version 1.35.4 \
+            -schema-location default \
+            -schema-location 'https://raw.githubusercontent.com/datreeio/CRDs-catalog/main/{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json' \
+            /tmp/rendered/jobsearch-base.yaml
+
+  # ---------------------------------------------------------------------------
+  # Docker: prove both images build (no push; publishing is a separate workflow)
+  # ---------------------------------------------------------------------------
+  jobsearch_images:
+    runs-on: arc-runners
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ inputs.repository }}
+          ref: ${{ inputs.ref }}
+
+      - name: Setup Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build backend image
+        uses: docker/build-push-action@v6
+        with:
+          context: backend
+          push: false
+
+      - name: Build web image
+        uses: docker/build-push-action@v6
+        with:
+          context: web
+          push: false
