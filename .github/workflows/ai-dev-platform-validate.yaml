@@ -42,25 +42,19 @@ jobs:
             exit 1
           fi
 
-      # The runner image has no xz, and ShellCheck only ships .tar.xz for Linux, so the
-      # archive is unpacked with Python's tarfile.
-      - name: Setup Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.12'
-
       # Pinned release binary, verified against a checksum recorded here (same
       # approach as herdr in the Dockerfile). Update version and hash together.
+      # .tar.gz, not .tar.xz: the runner image has no xz.
       - name: Install ShellCheck
         env:
           SC_VERSION: v0.11.0
-          SC_SHA256: 8c3be12b05d5c177a04c29e3c78ce89ac86f1595681cab149b65b97c4e227198
+          SC_SHA256: b7af85e41cc99489dcc21d66c6d5f3685138f06d34651e6d34b42ec6d54fe6f6
         run: |
           set -euo pipefail
-          curl -fsSL -o /tmp/sc.tar.xz \
-            "https://github.com/koalaman/shellcheck/releases/download/${SC_VERSION}/shellcheck-${SC_VERSION}.linux.x86_64.tar.xz"
-          echo "${SC_SHA256}  /tmp/sc.tar.xz" | sha256sum -c -
-          python3 -c "import tarfile; tarfile.open('/tmp/sc.tar.xz').extractall('/tmp')"
+          curl -fsSL -o /tmp/sc.tar.gz \
+            "https://github.com/koalaman/shellcheck/releases/download/${SC_VERSION}/shellcheck-${SC_VERSION}.linux.x86_64.tar.gz"
+          echo "${SC_SHA256}  /tmp/sc.tar.gz" | sha256sum -c -
+          tar -xzf /tmp/sc.tar.gz -C /tmp
           echo "/tmp/shellcheck-${SC_VERSION}" >> "$GITHUB_PATH"
 
       - name: ShellCheck
