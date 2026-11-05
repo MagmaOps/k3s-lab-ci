@@ -26,8 +26,10 @@ on:
       DOCKERHUB_TOKEN:
         required: true
 
+# pull-requests: write is needed to leave the version comment; the caller must grant it too.
 permissions:
   contents: read
+  pull-requests: write
 
 jobs:
   publish:
@@ -49,6 +51,34 @@ jobs:
             exit 1
           fi
           echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      # Show the version up front: log annotation, run summary and a comment on the PR
+      # that produced the commit (if any; a failure to comment never fails the build).
+      - name: Announce target version
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          IMAGE: ${{ inputs.image }}
+          VERSION: ${{ steps.ver.outputs.version }}
+          REPO: ${{ inputs.repository }}
+          EVENT_PR: ${{ github.event.pull_request.number }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          msg="Building \`$IMAGE:$VERSION\` ([run]($RUN_URL))"
+          echo "::notice title=Target image version::$IMAGE:$VERSION"
+          echo "### Target image: \`$IMAGE:$VERSION\`" >> "$GITHUB_STEP_SUMMARY"
+          # PR number from the caller's event; fall back to a commit->PR lookup.
+          pr="$EVENT_PR"
+          if [ -z "$pr" ]; then
+            sha=$(git rev-parse HEAD)
+            pr=$(gh api "repos/$REPO/commits/$sha/pulls" --jq '.[0].number // empty')
+          fi
+          if [ -n "$pr" ]; then
+            gh pr comment "$pr" --repo "$REPO" --body "$msg"
+          else
+            echo "No PR associated with $sha, skipping comment."
+          fi
 
       - name: Setup Buildx
         uses: docker/setup-buildx-action@v3

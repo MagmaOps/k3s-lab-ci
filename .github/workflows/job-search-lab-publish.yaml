@@ -30,6 +30,11 @@ on:
       DOCKERHUB_TOKEN:
         required: true
 
+# pull-requests: write is needed to leave the version comment; the caller must grant it too.
+permissions:
+  contents: read
+  pull-requests: write
+
 jobs:
   publish:
     runs-on: arc-runners
@@ -53,6 +58,34 @@ jobs:
           fi
           echo "version=$tags" >> "$GITHUB_OUTPUT"
 
+      # Show the version up front: log annotation, run summary and a comment on the PR
+      # that produced the commit (if any; a failure to comment never fails the build).
+      - name: Announce target version
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REGISTRY: ${{ inputs.registry }}
+          VERSION: ${{ steps.ver.outputs.version }}
+          REPO: ${{ inputs.repository }}
+          EVENT_PR: ${{ github.event.pull_request.number }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          msg="Building \`$REGISTRY/jobsearch-backend:$VERSION\` and \`$REGISTRY/jobsearch-web:$VERSION\` ([run]($RUN_URL))"
+          echo "::notice title=Target image version::$VERSION"
+          echo "### Target version: \`$VERSION\`" >> "$GITHUB_STEP_SUMMARY"
+          # PR number from the caller's event; fall back to a commit->PR lookup.
+          pr="$EVENT_PR"
+          if [ -z "$pr" ]; then
+            sha=$(git rev-parse HEAD)
+            pr=$(gh api "repos/$REPO/commits/$sha/pulls" --jq '.[0].number // empty')
+          fi
+          if [ -n "$pr" ]; then
+            gh pr comment "$pr" --repo "$REPO" --body "$msg"
+          else
+            echo "No PR associated with $sha, skipping comment."
+          fi
+
       - name: Setup Buildx
         uses: docker/setup-buildx-action@v3
 
@@ -61,6 +94,26 @@ jobs:
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      # Versioned tags are immutable: refuse to overwrite an existing version of either
+      # image. (`latest` is intentionally moved on every publish.)
+      - name: Refuse to overwrite an existing tag
+        env:
+          REGISTRY: ${{ inputs.registry }}
+          VERSION: ${{ steps.ver.outputs.version }}
+        run: |
+          set -euo pipefail
+          failed=0
+          for ref in "$REGISTRY/jobsearch-backend:$VERSION" "$REGISTRY/jobsearch-web:$VERSION"; do
+            if docker buildx imagetools inspect "$ref" >/dev/null 2>&1; then
+              echo "::error::$ref already exists on Docker Hub."
+              failed=1
+            fi
+          done
+          if [ "$failed" -ne 0 ]; then
+            echo "::error::Bump newTag in k8s/base/kustomization.yaml (and the overlay) to a new version."
+            exit 1
+          fi
 
       - name: Push backend image
         uses: docker/build-push-action@v6
